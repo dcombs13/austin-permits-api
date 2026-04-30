@@ -1,0 +1,59 @@
+{
+  "name": "PermitIQ",
+  "description": "Real-time Austin Texas building permit data for AI agents and developers. Query 2.35 million permits by location, value, type and date.",
+  "version": "1.0.0",
+  "base_url": "https://austin-permits-api.onrender.com",
+  "pricing": {
+    "model": "per_request",
+    "amount": 0.05,
+    "currency": "USD"
+  },
+  "tools": [
+    {
+      "name": "get_recent_permits",
+      "description": "Get the most recent building permits issued in Austin Texas. Filter by zip code. Returns permit type, address, contractor, valuation, and date.",
+      "endpoint": "/permits/recent",
+      "method": "GET",
+      "parameters": {
+        "api_key": {
+          "type": "string",
+          "required": true,
+          "description": "Your PermitIQ API key"
+        },
+        "zip": {
+          "type": "string",
+          "required": false,
+          "description": "Austin zip code to filter by e.g. 78701"
+        },
+        "limit": {
+          "type": "number",
+          "required": false,
+          "description": "Number of results to return. Default 10 max 50."
+        }
+      }
+    },
+    {
+      "name": "get_high_value_permits",
+      "description": "Get high value building permits in Austin Texas above a minimum dollar threshold. Useful for finding luxury construction and major developments.",
+      "endpoint": "/permits/high-value",
+      "method": "GET",
+      "parameters": {
+        "api_key": {
+          "type": "string",
+          "required": true,
+          "description": "Your PermitIQ API key"
+        },
+        "min": {
+          "type": "number",
+          "required": false,
+          "description": "Minimum permit valuation in dollars. Default 500000."
+        },
+        "limit": {
+          "type": "number",
+          "required": false,
+          "description": "Number of results to return. Default 10 max 50."
+        }
+      }
+    }
+  ]
+}
