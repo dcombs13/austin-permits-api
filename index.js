@@ -7,7 +7,7 @@ const PORT = 3000;
 
 const AUSTIN_API = 'https://data.austintexas.gov/resource/3syk-w9eu.json';
 
-app.use(express.json());
+app.use(express.json());app.use(express.static('.'));
 
 app.get('/permits/recent', async (req, res) => {
   try {
