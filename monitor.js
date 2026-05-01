@@ -215,21 +215,21 @@ async function runCheck(dryRun = false) {
   log(`Done — ${sent} ${dryRun ? 'would send' : 'sent'}, ${skipped} skipped (no email), ${errors} errors\n`);
 }
 
-// ------------------------------------------------------------------
-// Entry point — poll loop
-// ------------------------------------------------------------------
+module.exports = { runCheck };
 
-const DRY_RUN = process.argv.includes('--dry-run');
+// Only start the poll loop when run directly (node monitor.js)
+if (require.main === module) {
+  const DRY_RUN = process.argv.includes('--dry-run');
+  if (DRY_RUN) log('Running in DRY RUN mode — emails will not be sent');
 
-if (DRY_RUN) log('Running in DRY RUN mode — emails will not be sent');
-
-async function loop() {
-  try {
-    await runCheck(DRY_RUN);
-  } catch (err) {
-    log(`Unhandled error in runCheck: ${err.message}`);
+  async function loop() {
+    try {
+      await runCheck(DRY_RUN);
+    } catch (err) {
+      log(`Unhandled error in runCheck: ${err.message}`);
+    }
+    setTimeout(loop, POLL_INTERVAL_MS);
   }
-  setTimeout(loop, POLL_INTERVAL_MS);
-}
 
-loop();
+  loop();
+}

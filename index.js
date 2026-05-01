@@ -7,6 +7,8 @@ const { findContractorEmail, quotaStatus } = require('./find-email');
 const { writeOutreachEmail } = require('./write-email');
 const { sendOutreachEmail } = require('./send-email');
 
+const { runCheck } = require('./monitor');
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -175,4 +177,8 @@ app.get('/', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`PermitIQ API running on port ${PORT}`);
+  runCheck().catch((err) => console.error('[monitor] startup error:', err.message));
+  setInterval(() => {
+    runCheck().catch((err) => console.error('[monitor] error:', err.message));
+  }, 60 * 60 * 1000);
 });
