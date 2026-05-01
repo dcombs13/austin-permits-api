@@ -41,16 +41,28 @@ function getDb() {
       value TEXT
     );
     CREATE TABLE IF NOT EXISTS outreach_log (
-      permit_number TEXT PRIMARY KEY,
-      checked_at    TEXT,
-      address       TEXT,
-      to_email      TEXT,
-      subject       TEXT,
-      resend_id     TEXT,
-      status        TEXT,
-      reason        TEXT
+      permit_number    TEXT PRIMARY KEY,
+      checked_at       TEXT,
+      address          TEXT,
+      to_email         TEXT,
+      subject          TEXT,
+      resend_id        TEXT,
+      status           TEXT,
+      reason           TEXT,
+      contractor_name  TEXT,
+      company          TEXT,
+      job_type         TEXT,
+      valuation        REAL
+    );
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key   TEXT PRIMARY KEY,
+      value TEXT
     );
   `);
+  // Migrate existing installs — ignore errors if columns already exist
+  for (const col of ['contractor_name TEXT', 'company TEXT', 'job_type TEXT', 'valuation REAL']) {
+    try { db.exec(`ALTER TABLE outreach_log ADD COLUMN ${col}`); } catch {}
+  }
   return db;
 }
 
@@ -71,14 +83,19 @@ function alreadySent(db, permitNumber) {
   return !!db.prepare("SELECT 1 FROM outreach_log WHERE permit_number = ? AND status = 'sent'").get(permitNumber);
 }
 
-function logResult(db, { permitNumber, checkedAt, address, toEmail, subject, resendId, status, reason }) {
+function logResult(db, { permitNumber, checkedAt, address, toEmail, subject, resendId, status, reason, contractorName, company, jobType, valuation }) {
   // INSERT OR REPLACE so a 'sent' entry always overwrites a prior 'skipped'/'error' row,
   // ensuring alreadySent() reliably finds it on future runs.
   db.prepare(`
     INSERT OR REPLACE INTO outreach_log
-      (permit_number, checked_at, address, to_email, subject, resend_id, status, reason)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(permitNumber, checkedAt, address ?? null, toEmail ?? null, subject ?? null, resendId ?? null, status, reason ?? null);
+      (permit_number, checked_at, address, to_email, subject, resend_id, status, reason,
+       contractor_name, company, job_type, valuation)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    permitNumber, checkedAt, address ?? null, toEmail ?? null, subject ?? null,
+    resendId ?? null, status, reason ?? null,
+    contractorName ?? null, company ?? null, jobType ?? null, valuation ?? null,
+  );
 }
 
 function log(msg) {
@@ -324,6 +341,10 @@ async function runCheck(dryRun = false, lookbackHours = null) {
         subject: drafted.subject,
         resendId: sendResult.id,
         status: 'sent',
+        contractorName: permit.contractor?.full_name ?? null,
+        company: permit.contractor?.company_name ?? null,
+        jobType: permit.permit_type || permit.work_class || null,
+        valuation: permit.job_valuation ?? null,
       });
       sent++;
     } catch (e) {

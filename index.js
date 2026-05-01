@@ -1,6 +1,8 @@
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
+const path = require('path');
+const Database = require('better-sqlite3');
 const { fetchEnrichedPermits } = require('./enrich');
 const { isReady } = require('./db');
 const { findContractorEmail, quotaStatus } = require('./find-email');
@@ -11,11 +13,119 @@ const { runCheck } = require('./monitor');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const DB_PATH = path.join(__dirname, 'permits.db');
 
 const AUSTIN_API = 'https://data.austintexas.gov/resource/3syk-w9eu.json';
 
 app.use(express.json());
 app.use(express.static('.'));
+
+// CORS — allow browser access from any origin (Lovable, local dev, etc.)
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+
+function getDb() {
+  return new Database(DB_PATH);
+}
+
+function getSettings(db) {
+  const rows = db.prepare('SELECT key, value FROM app_settings').all();
+  const s = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+  return {
+    sender_name:    s.sender_name    ?? process.env.SENDER_NAME    ?? '',
+    sender_email:   s.sender_email   ?? process.env.SENDER_EMAIL   ?? '',
+    sender_company: s.sender_company ?? process.env.SENDER_COMPANY ?? '',
+    min_valuation:  Number(s.min_valuation ?? process.env.MIN_VALUATION ?? 25000),
+    permit_types:   (s.permit_types  ?? process.env.MONITOR_PERMIT_TYPES ?? 'BP,BC')
+                      .split(',').map((t) => t.trim()),
+  };
+}
+
+// --- Dashboard API ---
+
+app.get('/api/stats', (req, res) => {
+  try {
+    const db = getDb();
+    const weekAgo  = new Date(Date.now() - 7  * 24 * 60 * 60 * 1000).toISOString();
+    const monthAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+
+    const permits_found_this_week     = db.prepare("SELECT COUNT(*) as n FROM outreach_log WHERE checked_at >= ?").get(weekAgo).n;
+    const emails_sent_this_week       = db.prepare("SELECT COUNT(*) as n FROM outreach_log WHERE status='sent' AND checked_at >= ?").get(weekAgo).n;
+    const contractors_reached_this_month = db.prepare("SELECT COUNT(DISTINCT to_email) as n FROM outreach_log WHERE status='sent' AND checked_at >= ? AND to_email IS NOT NULL").get(monthAgo).n;
+    const { total } = db.prepare("SELECT SUM(valuation) as total FROM outreach_log WHERE status='sent' AND checked_at >= ? AND valuation IS NOT NULL").get(monthAgo);
+
+    db.close();
+    res.json({
+      permits_found_this_week,
+      emails_sent_this_week,
+      contractors_reached_this_month,
+      estimated_pipeline_value: total ?? null,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/outreach', (req, res) => {
+  try {
+    const db = getDb();
+    const rows = db.prepare(`
+      SELECT
+        contractor_name,
+        company,
+        address,
+        job_type,
+        valuation,
+        checked_at  AS sent_at,
+        status,
+        to_email,
+        subject,
+        permit_number
+      FROM outreach_log
+      ORDER BY checked_at DESC
+      LIMIT 50
+    `).all();
+    db.close();
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/settings', (req, res) => {
+  try {
+    const db = getDb();
+    res.json(getSettings(db));
+    db.close();
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/settings', (req, res) => {
+  try {
+    const allowed = ['sender_name', 'sender_email', 'sender_company', 'min_valuation', 'permit_types'];
+    const db = getDb();
+    const upsert = db.prepare('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)');
+    const update = db.transaction((body) => {
+      for (const key of allowed) {
+        if (body[key] === undefined) continue;
+        const value = Array.isArray(body[key]) ? body[key].join(',') : String(body[key]);
+        upsert.run(key, value);
+      }
+    });
+    update(req.body);
+    res.json(getSettings(db));
+    db.close();
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 app.get('/permits/recent', async (req, res) => {
   try {
