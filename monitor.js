@@ -80,6 +80,65 @@ function log(msg) {
 }
 
 // ------------------------------------------------------------------
+// Permit relevance scoring — lumber yard filter
+// ------------------------------------------------------------------
+
+const INCLUDE_SIGNALS = [
+  { re: /\bnew\s+(construction|build|home|house|dwelling|sfr|residence|commercial|office|building|structure)\b/i, label: 'new construction', score: 10 },
+  { re: /\baddition\b/i,                        label: 'addition',           score: 8 },
+  { re: /\bframing?\b/i,                        label: 'framing',            score: 8 },
+  { re: /\bstructural\b/i,                      label: 'structural',         score: 7 },
+  { re: /\badu\b|\baccessory\s+dwelling\b/i,    label: 'ADU',                score: 7 },
+  { re: /\b(gut\s+)?remodel\b/i,                label: 'remodel',            score: 5 },
+  { re: /\brenovation\b/i,                      label: 'renovation',         score: 5 },
+  { re: /\bshell\b/i,                           label: 'shell',              score: 5 },
+  { re: /\bdeck\b/i,                            label: 'deck',               score: 4 },
+  { re: /\bporch\b/i,                           label: 'porch',              score: 4 },
+  { re: /\bgarage\b/i,                          label: 'garage',             score: 4 },
+  { re: /\btenant\s+improvement\b|\bT\.?I\.?\b/i, label: 'tenant improvement', score: 4 },
+];
+
+const EXCLUDE_SIGNALS = [
+  { re: /\belectric(al)?\b/i,                           label: 'electrical',       score: -8 },
+  { re: /\bplumb(ing)?\b/i,                             label: 'plumbing',         score: -8 },
+  { re: /\bhvac\b|\bmechanical\b/i,                     label: 'hvac/mechanical',  score: -8 },
+  { re: /\bpool\b|\bspa\b/i,                            label: 'pool/spa',         score: -8 },
+  { re: /\b(re)?roof(ing)?\b/i,                         label: 'roofing',          score: -6 },
+  { re: /\bsolar\b/i,                                   label: 'solar',            score: -7 },
+  { re: /\bfire\s+(sprinkler|suppression|alarm)\b/i,    label: 'fire suppression', score: -7 },
+  { re: /\bsign(age)?\b/i,                              label: 'signage',          score: -8 },
+  { re: /\bfence\b/i,                                   label: 'fence',            score: -5 },
+  { re: /\bwindow\s+replacement\b/i,                    label: 'window replacement', score: -4 },
+  { re: /\bpaint(ing)?\b/i,                             label: 'painting',         score: -4 },
+];
+
+const WORK_CLASS_SCORES = {
+  'new': 10, 'addition': 8, 'renovation': 5, 'remodel': 5, 'alteration': 4, 'repair': 1, 'demolition': -2,
+};
+
+// Minimum score to qualify for outreach — below this the permit is skipped
+const MIN_RELEVANCE_SCORE = Number(process.env.MIN_RELEVANCE_SCORE ?? 4);
+
+function scorePermitRelevance(permit) {
+  const text = [permit.description, permit.permit_type, permit.work_class].filter(Boolean).join(' ');
+  const workClass = (permit.work_class || '').toLowerCase().trim();
+
+  let score = WORK_CLASS_SCORES[workClass] ?? 0;
+  const hits = workClass && WORK_CLASS_SCORES[workClass] != null
+    ? [`work_class=${workClass}(${WORK_CLASS_SCORES[workClass] >= 0 ? '+' : ''}${WORK_CLASS_SCORES[workClass]})`]
+    : [];
+
+  for (const { re, label, score: s } of INCLUDE_SIGNALS) {
+    if (re.test(text)) { score += s; hits.push(`+${s} ${label}`); }
+  }
+  for (const { re, label, score: s } of EXCLUDE_SIGNALS) {
+    if (re.test(text)) { score += s; hits.push(`${s} ${label}`); }
+  }
+
+  return { score, reason: hits.join(', ') || 'no signals matched' };
+}
+
+// ------------------------------------------------------------------
 // One check cycle
 // ------------------------------------------------------------------
 
@@ -131,6 +190,16 @@ async function runCheck(dryRun = false, lookbackHours = null) {
       log(`  skip ${permit.permit_number} — already processed`);
       continue;
     }
+
+    // --- Relevance filter ---
+    const { score, reason } = scorePermitRelevance(permit);
+    if (score < MIN_RELEVANCE_SCORE) {
+      log(`  skip ${permit.permit_number} — relevance ${score} (${reason})`);
+      logResult(db, { permitNumber: permit.permit_number, checkedAt, address: permit.address, status: 'skipped', reason: `low relevance: ${score} — ${reason}` });
+      skipped++;
+      continue;
+    }
+    log(`  ${permit.permit_number} relevance ${score} (${reason})`);
 
     // --- Step 1: find email ---
     let emailResult = null;

@@ -36,3 +36,5 @@ services:
         value: BP,BC
       - key: MONITOR_LOOKBACK_HOURS
         value: "48"
+      - key: MIN_RELEVANCE_SCORE
+        value: "4"
