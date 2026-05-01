@@ -67,9 +67,15 @@ function alreadyProcessed(db, permitNumber) {
   return !!db.prepare('SELECT 1 FROM outreach_log WHERE permit_number = ?').get(permitNumber);
 }
 
+function alreadySent(db, permitNumber) {
+  return !!db.prepare("SELECT 1 FROM outreach_log WHERE permit_number = ? AND status = 'sent'").get(permitNumber);
+}
+
 function logResult(db, { permitNumber, checkedAt, address, toEmail, subject, resendId, status, reason }) {
+  // INSERT OR REPLACE so a 'sent' entry always overwrites a prior 'skipped'/'error' row,
+  // ensuring alreadySent() reliably finds it on future runs.
   db.prepare(`
-    INSERT OR IGNORE INTO outreach_log
+    INSERT OR REPLACE INTO outreach_log
       (permit_number, checked_at, address, to_email, subject, resend_id, status, reason)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(permitNumber, checkedAt, address ?? null, toEmail ?? null, subject ?? null, resendId ?? null, status, reason ?? null);
@@ -103,7 +109,7 @@ const EXCLUDE_SIGNALS = [
   { re: /\bplumb(ing)?\b/i,                             label: 'plumbing',         score: -8 },
   { re: /\bhvac\b|\bmechanical\b/i,                     label: 'hvac/mechanical',  score: -8 },
   { re: /\bpool\b|\bspa\b/i,                            label: 'pool/spa',         score: -8 },
-  { re: /\b(re)?roof(ing)?\b/i,                         label: 'roofing',          score: -6 },
+  { re: /\bre-?roof(ing)?\b|\broof(ing)?\b/i,            label: 'roofing',          score: -20 },
   { re: /\bsolar\b/i,                                   label: 'solar',            score: -7 },
   { re: /\bfire\s+(sprinkler|suppression|alarm)\b/i,    label: 'fire suppression', score: -7 },
   { re: /\bsign(age)?\b/i,                              label: 'signage',          score: -8 },
@@ -185,6 +191,12 @@ async function runCheck(dryRun = false, lookbackHours = null) {
 
   for (const permit of permits) {
     const checkedAt = new Date().toISOString();
+
+    // Hard dedup — never resend regardless of lookback or DB state
+    if (alreadySent(db, permit.permit_number)) {
+      log(`  skip ${permit.permit_number} — already sent (dedup)`);
+      continue;
+    }
 
     if (alreadyProcessed(db, permit.permit_number)) {
       log(`  skip ${permit.permit_number} — already processed`);
