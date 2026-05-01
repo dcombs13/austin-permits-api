@@ -87,61 +87,86 @@ function log(msg) {
 
 // ------------------------------------------------------------------
 // Permit relevance scoring — lumber yard filter
+// Only permits requiring significant structural wood (framing lumber,
+// plywood, OSB, engineered wood, decking) qualify for outreach.
 // ------------------------------------------------------------------
 
-const INCLUDE_SIGNALS = [
-  { re: /\bnew\s+(construction|build|home|house|dwelling|sfr|residence|commercial|office|building|structure)\b/i, label: 'new construction', score: 10 },
-  { re: /\baddition\b/i,                        label: 'addition',           score: 8 },
-  { re: /\bframing?\b/i,                        label: 'framing',            score: 8 },
-  { re: /\bstructural\b/i,                      label: 'structural',         score: 7 },
-  { re: /\badu\b|\baccessory\s+dwelling\b/i,    label: 'ADU',                score: 7 },
-  { re: /\b(gut\s+)?remodel\b/i,                label: 'remodel',            score: 5 },
-  { re: /\brenovation\b/i,                      label: 'renovation',         score: 5 },
-  { re: /\bshell\b/i,                           label: 'shell',              score: 5 },
-  { re: /\bdeck\b/i,                            label: 'deck',               score: 4 },
-  { re: /\bporch\b/i,                           label: 'porch',              score: 4 },
-  { re: /\bgarage\b/i,                          label: 'garage',             score: 4 },
-  { re: /\btenant\s+improvement\b|\bT\.?I\.?\b/i, label: 'tenant improvement', score: 4 },
+// HIGH VALUE (+15) — always send, structural wood definitely needed
+const HIGH_VALUE_SIGNALS = [
+  { re: /\bnew\s+(single.famil|sfr|residence|residential|house|home|dwelling)\b/i, label: 'new SFR' },
+  { re: /\b(single.famil|sfr)\b/i,                                                  label: 'SFR' },
+  { re: /\bnew\s+(multi.famil|apartment|condo|duplex|triplex|fourplex)\b/i,          label: 'new multifamily' },
+  { re: /\bnew\s+(commercial|warehouse|retail|office|industrial|building)\b/i,       label: 'new commercial' },
+  { re: /\broom\s+addition\b|\bhome\s+addition\b|\bhouse\s+addition\b/i,             label: 'home addition' },
+  { re: /\baddition\b/i,                                                              label: 'addition' },
+  { re: /\badu\b|\baccessory\s+dwelling\b/i,                                          label: 'ADU' },
+  { re: /\bnew\s+garage\b|\bgarage\s+(construction|build|addition)\b/i,               label: 'garage construction' },
+  { re: /\bgarage\s+(conversion|converted)\s+to\s+(living|habitable)\b/i,             label: 'garage conversion' },
+  { re: /\bsecond\s+stor(y|ies)\b|\b2nd\s+stor(y|ies)\b/i,                           label: 'second story addition' },
 ];
 
-const EXCLUDE_SIGNALS = [
-  { re: /\belectric(al)?\b/i,                           label: 'electrical',       score: -8 },
-  { re: /\bplumb(ing)?\b/i,                             label: 'plumbing',         score: -8 },
-  { re: /\bhvac\b|\bmechanical\b/i,                     label: 'hvac/mechanical',  score: -8 },
-  { re: /\bpool\b|\bspa\b/i,                            label: 'pool/spa',         score: -8 },
-  { re: /\bre-?roof(ing)?\b|\broof(ing)?\b/i,            label: 'roofing',          score: -20 },
-  { re: /\bsolar\b/i,                                   label: 'solar',            score: -7 },
-  { re: /\bfire\s+(sprinkler|suppression|alarm)\b/i,    label: 'fire suppression', score: -7 },
-  { re: /\bsign(age)?\b/i,                              label: 'signage',          score: -8 },
-  { re: /\bfence\b/i,                                   label: 'fence',            score: -5 },
-  { re: /\bwindow\s+replacement\b/i,                    label: 'window replacement', score: -4 },
-  { re: /\bpaint(ing)?\b/i,                             label: 'painting',         score: -4 },
+// MEDIUM VALUE (+8) — send only if valuation > $50k or valuation unknown
+const MEDIUM_VALUE_SIGNALS = [
+  { re: /\bstructural\s+(renovation|remodel|framing|modification)\b/i,                label: 'structural renovation' },
+  { re: /\bgut\s+(rehab|remodel|renovation)\b|\bfull\s+(gut|remodel)\b/i,             label: 'gut rehab' },
+  { re: /\b(barn|agricultural|farm)\b.*\b(building|structure|construction)\b/i,        label: 'barn/agricultural' },
+  { re: /\b(building|structure|construction)\b.*\b(barn|agricultural|farm)\b/i,        label: 'barn/agricultural' },
 ];
 
-const WORK_CLASS_SCORES = {
-  'new': 10, 'addition': 8, 'renovation': 5, 'remodel': 5, 'alteration': 4, 'repair': 1, 'demolition': -2,
-};
+// HARD EXCLUDES — score -25, never send
+const HARD_EXCLUDES = [
+  { re: /\btenant\s+improvement\b|\bfinish\s+out\b|\binterior\s+finish\b/i,           label: 'TI / finish out' },
+  { re: /\binterior\s+(demo(lition)?|remodel|renovation)\b/i,                          label: 'interior only' },
+  { re: /\bkitchen\s+(remodel|renovation|update|upgrade|demo)\b/i,                     label: 'kitchen remodel' },
+  { re: /\bbath(room)?\s+(remodel|renovation|update|upgrade|demo)\b/i,                 label: 'bathroom remodel' },
+  { re: /\belectric(al)?\b/i,                                                           label: 'electrical' },
+  { re: /\bplumb(ing)?\b/i,                                                             label: 'plumbing' },
+  { re: /\bhvac\b|\bmechanical\b/i,                                                     label: 'HVAC/mechanical' },
+  { re: /\bre-?roof(ing)?\b|\broof(ing)?\b/i,                                           label: 'roofing' },
+  { re: /\bpool\b|\bspa\b/i,                                                             label: 'pool/spa' },
+  { re: /\bfence\b/i,                                                                    label: 'fence' },
+  { re: /\bsign(age)?\b/i,                                                               label: 'signage' },
+  { re: /\bfire\s+(alarm|sprinkler|suppression)\b/i,                                    label: 'fire alarm/sprinkler' },
+  { re: /\bfoundation\s+repair\b/i,                                                      label: 'foundation repair only' },
+  { re: /\bpaint(ing)?\b/i,                                                              label: 'painting' },
+  { re: /\bflooring\b/i,                                                                 label: 'flooring' },
+];
 
-// Minimum score to qualify for outreach — below this the permit is skipped
-const MIN_RELEVANCE_SCORE = Number(process.env.MIN_RELEVANCE_SCORE ?? 4);
+const MIN_RELEVANCE_SCORE = Number(process.env.MIN_RELEVANCE_SCORE ?? 8);
 
 function scorePermitRelevance(permit) {
   const text = [permit.description, permit.permit_type, permit.work_class].filter(Boolean).join(' ');
   const workClass = (permit.work_class || '').toLowerCase().trim();
+  const valuation = permit.job_valuation || 0;
 
-  let score = WORK_CLASS_SCORES[workClass] ?? 0;
-  const hits = workClass && WORK_CLASS_SCORES[workClass] != null
-    ? [`work_class=${workClass}(${WORK_CLASS_SCORES[workClass] >= 0 ? '+' : ''}${WORK_CLASS_SCORES[workClass]})`]
-    : [];
-
-  for (const { re, label, score: s } of INCLUDE_SIGNALS) {
-    if (re.test(text)) { score += s; hits.push(`+${s} ${label}`); }
-  }
-  for (const { re, label, score: s } of EXCLUDE_SIGNALS) {
-    if (re.test(text)) { score += s; hits.push(`${s} ${label}`); }
+  // Hard valuation floor — skip if we know the job is too small
+  if (valuation > 0 && valuation < 25_000) {
+    return { score: -25, reason: `under $25k valuation ($${valuation.toLocaleString()})` };
   }
 
-  return { score, reason: hits.join(', ') || 'no signals matched' };
+  // Hard excludes — checked before any positive signals
+  for (const { re, label } of HARD_EXCLUDES) {
+    if (re.test(text)) return { score: -25, reason: `excluded: ${label}` };
+  }
+
+  // work_class='new' or 'addition' on a BP/BC permit is unambiguously high value
+  if (workClass === 'new')      return { score: 15, reason: 'new construction (work_class=new)' };
+  if (workClass === 'addition') return { score: 15, reason: 'addition (work_class=addition)' };
+
+  // High value keyword scan
+  const hvHits = HIGH_VALUE_SIGNALS.filter(({ re }) => re.test(text)).map(({ label }) => label);
+  if (hvHits.length > 0) return { score: 15, reason: `high value: ${hvHits.join(', ')}` };
+
+  // Medium value keyword scan
+  const mvHits = MEDIUM_VALUE_SIGNALS.filter(({ re }) => re.test(text)).map(({ label }) => label);
+  if (mvHits.length > 0) {
+    if (valuation > 0 && valuation < 50_000) {
+      return { score: 0, reason: `medium value (${mvHits.join(', ')}) but under $50k ($${valuation.toLocaleString()})` };
+    }
+    return { score: 8, reason: `medium value: ${mvHits.join(', ')}${valuation > 0 ? ` ($${valuation.toLocaleString()})` : ''}` };
+  }
+
+  return { score: 0, reason: 'no structural wood signals found' };
 }
 
 // ------------------------------------------------------------------
