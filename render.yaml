@@ -12,6 +12,12 @@ services:
         sync: false
       - key: RESEND_API_KEY
         sync: false
+      - key: SENDER_NAME
+        sync: false
+      - key: SENDER_EMAIL
+        sync: false
+      - key: SENDER_COMPANY
+        sync: false
 
   - type: worker
     name: firstnail-monitor

@@ -137,7 +137,12 @@ app.post('/permits/send-outreach', async (req, res) => {
           result.status = 'dry_run';
           result.body = drafted.body;
         } else {
-          const sent = await sendOutreachEmail(drafted);
+          const sent = await sendOutreachEmail({
+            ...drafted,
+            sender_name: process.env.SENDER_NAME,
+            sender_email: process.env.SENDER_EMAIL,
+            sender_company: process.env.SENDER_COMPANY,
+          });
           result.status = 'sent';
           result.resend_id = sent.id;
         }

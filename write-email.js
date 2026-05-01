@@ -44,7 +44,6 @@ async function writeOutreachEmail(permit) {
     output_config: {
       format: {
         type: 'json_schema',
-        name: 'outreach_email',
         schema: {
           type: 'object',
           properties: {
@@ -54,7 +53,6 @@ async function writeOutreachEmail(permit) {
           required: ['subject', 'body'],
           additionalProperties: false,
         },
-        strict: true,
       },
     },
     messages: [{ role: 'user', content: userMessage }],

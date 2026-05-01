@@ -1,8 +1,5 @@
 const { Resend } = require('resend');
 
-const FROM_ADDRESS = 'Mike Patterson <mike@austinlumbersupply.com>';
-const REPLY_TO = 'mike@austinlumbersupply.com';
-
 function getResend() {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) throw new Error('RESEND_API_KEY is not set');
@@ -10,15 +7,20 @@ function getResend() {
 }
 
 // Returns the Resend send response { id } on success.
-async function sendOutreachEmail({ to_name, to_email, subject, body }) {
+// sender_name, sender_email, sender_company identify the lumber yard owner.
+// From uses their display name; Reply-To routes replies to their real inbox.
+async function sendOutreachEmail({ to_name, to_email, subject, body, sender_name, sender_email, sender_company }) {
   if (!to_email) throw new Error('No recipient email address');
+  if (!sender_email) throw new Error('No sender email address');
 
   const resend = getResend();
   const to = to_name ? `${to_name} <${to_email}>` : to_email;
+  const fromDisplay = sender_company ? `${sender_name}, ${sender_company}` : sender_name;
+  const from = `${fromDisplay} <${sender_email}>`;
 
   const { data, error } = await resend.emails.send({
-    from: FROM_ADDRESS,
-    reply_to: REPLY_TO,
+    from,
+    reply_to: sender_email,
     to,
     subject,
     text: body,

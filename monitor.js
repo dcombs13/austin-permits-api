@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Autonomous permit monitor — runs hourly, finds new Austin permits, sends outreach emails.
 // Run: node monitor.js
-// Env vars required: HUNTER_API_KEY, ANTHROPIC_API_KEY, RESEND_API_KEY
+// Env vars required: HUNTER_API_KEY, ANTHROPIC_API_KEY, RESEND_API_KEY, SENDER_NAME, SENDER_EMAIL, SENDER_COMPANY
+// TEST_MODE=true redirects all emails to TEST_EMAIL instead of real contractors
 
 require('dotenv').config();
 const Database = require('better-sqlite3');
@@ -24,6 +25,9 @@ const INITIAL_LOOKBACK_HOURS = Number(process.env.MONITOR_LOOKBACK_HOURS ?? 48);
 
 // Max permits to process per check (Hunter quota protection)
 const BATCH_LIMIT = 25;
+
+const TEST_MODE = process.env.TEST_MODE === 'true';
+const TEST_EMAIL = process.env.TEST_EMAIL || 'dpcombs2003@gmail.com';
 
 // ------------------------------------------------------------------
 // State + logging (same permits.db used by the API)
@@ -79,16 +83,20 @@ function log(msg) {
 // One check cycle
 // ------------------------------------------------------------------
 
-async function runCheck(dryRun = false) {
+async function runCheck(dryRun = false, lookbackHours = null) {
   const db = getDb();
   const now = new Date();
 
-  // On first run, look back INITIAL_LOOKBACK_HOURS so there's something to process immediately
-  let lastChecked = getLastChecked(db);
-  if (!lastChecked) {
-    const lookback = new Date(now.getTime() - INITIAL_LOOKBACK_HOURS * 60 * 60 * 1000);
-    lastChecked = lookback.toISOString();
-    log(`First run — looking back ${INITIAL_LOOKBACK_HOURS}h to ${lastChecked}`);
+  let lastChecked;
+  if (lookbackHours !== null) {
+    lastChecked = new Date(now.getTime() - lookbackHours * 60 * 60 * 1000).toISOString();
+    log(`--lookback-hours override — looking back ${lookbackHours}h to ${lastChecked}`);
+  } else {
+    lastChecked = getLastChecked(db);
+    if (!lastChecked) {
+      lastChecked = new Date(now.getTime() - INITIAL_LOOKBACK_HOURS * 60 * 60 * 1000).toISOString();
+      log(`First run — looking back ${INITIAL_LOOKBACK_HOURS}h to ${lastChecked}`);
+    }
   }
 
   // Stamp now before fetching so any permit issued during this run gets caught next time
@@ -192,8 +200,16 @@ async function runCheck(dryRun = false) {
     }
 
     try {
-      const sendResult = await sendOutreachEmail(drafted);
-      log(`  ✓ Sent to ${drafted.to_email}  (${permit.address})  id=${sendResult.id}`);
+      const recipient = TEST_MODE ? TEST_EMAIL : drafted.to_email;
+      const sendResult = await sendOutreachEmail({
+        ...drafted,
+        to_name: TEST_MODE ? null : drafted.to_name,
+        to_email: recipient,
+        sender_name: process.env.SENDER_NAME,
+        sender_email: process.env.SENDER_EMAIL,
+        sender_company: process.env.SENDER_COMPANY,
+      });
+      log(`  ✓ ${TEST_MODE ? `[TEST → ${recipient}]` : ''} Sent to ${drafted.to_email}  (${permit.address})  id=${sendResult.id}`);
       logResult(db, {
         permitNumber: permit.permit_number,
         checkedAt,
@@ -221,15 +237,19 @@ module.exports = { runCheck };
 if (require.main === module) {
   const DRY_RUN = process.argv.includes('--dry-run');
   if (DRY_RUN) log('Running in DRY RUN mode — emails will not be sent');
+  if (TEST_MODE) log(`Running in TEST MODE — all emails redirected to ${TEST_EMAIL}`);
 
-  async function loop() {
+  const lookbackArg = process.argv.find((a) => a.startsWith('--lookback-hours='));
+  const LOOKBACK_OVERRIDE = lookbackArg ? Number(lookbackArg.split('=')[1]) : null;
+
+  async function loop(firstRun = false) {
     try {
-      await runCheck(DRY_RUN);
+      await runCheck(DRY_RUN, firstRun ? LOOKBACK_OVERRIDE : null);
     } catch (err) {
       log(`Unhandled error in runCheck: ${err.message}`);
     }
-    setTimeout(loop, POLL_INTERVAL_MS);
+    setTimeout(() => loop(false), POLL_INTERVAL_MS);
   }
 
-  loop();
+  loop(true);
 }
