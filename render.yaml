@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: firstnail-api
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node index.js
+    envVars:
+      - key: HUNTER_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+
+  - type: worker
+    name: firstnail-monitor
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node monitor.js
+    envVars:
+      - key: HUNTER_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: MONITOR_PERMIT_TYPES
+        value: BP,BC
+      - key: MONITOR_LOOKBACK_HOURS
+        value: "48"
